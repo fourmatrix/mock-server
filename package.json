@@ -1,0 +1,17 @@
+{
+  "name": "h-proxy",
+  "version": "1.0.0",
+  "description": "proxy tool",
+  "main": "proxy.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies":{
+	"request":"2.72.0"
+  },
+  "keywords": [
+    "proxy"
+  ],
+  "author": "Jia Wang",
+  "license": "MIT"
+}
