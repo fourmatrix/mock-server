@@ -38,11 +38,11 @@ argv.forEach(function(item){
 var __defaultSetting = {
 
 	port: 8079
-	,cacheLevel: 1
-	,proxy:{
-		hostname:"proxy.pal.sap.corp",
-		port:8080
-	}
+	,cacheLevel: 0
+//	,proxy:{
+//		hostname:"proxy.pal.sap.corp",
+//		port:8080
+//	}
 	,persistent:"_service_persistent"
 	,onfig:"_service_config" 
 
@@ -56,11 +56,13 @@ argv = argv.filter(function(item){
 var port = parseInt(argv[2]) || 8079;
 
 var targetHostSetting = {
-  hostname: argv[3] || "http://www3.lenovo.com",
- // port: parseInt(argv[4]) || 9001,
+ // hostname: argv[3] || "http://www3.lenovo.com",
+hostname: argv[3] || "https://10.128.245.103",
+  port: parseInt(argv[4]) || 9002,
   https: false
 
 };
+
 
 
 if (/^https:\/\//.test(targetHostSetting.hostname)) {
@@ -70,6 +72,14 @@ if (/^https:\/\//.test(targetHostSetting.hostname)) {
 } else if (/^http:\/\//.test(targetHostSetting.hostname)) {
   targetHostSetting.hostname = targetHostSetting.hostname.replace(/^http:\/\//, "");
 }
+
+/*
+ * this can disable all SSL related check for entire node process
+ * */
+
+//if(targetHostSetting.https){
+//	process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";  
+//}
 
 var MIME = {
     "js": "application/javascript",
@@ -93,15 +103,60 @@ var MIME = {
     "mp4": "video/mp4"
 };
 
+var routeMap = new Map([
+	[new RegExp("_service_persistent"),  handlePersistence]
+	,[new RegExp(".*"),serverCb]
 
+]);
 
-const HMC_PATH = /\/resources\/(.*)/;
+const HMC_PATH = /\/resources66666\/(.*)/;
 
-function route(url){
-
-		
+function startProxy(req,res){
 	
+	if(req.method.toUpperCase() === "POST"){
+		var __reqBody = "";
+		req.on("data", (data)=>{
+			__reqBody += data;
+		}).on("end",()=>{
+			req.bodyData = __reqBody;
+			serverCb(req,res);
+		});
+	}else{
+		serverCb(req,res);
+	}
+}
 
+class Proxy{
+
+	constructor(){
+	  this.aRoutes = [
+		{
+			
+		}
+	  
+	  ];
+	}
+
+	config(){
+	
+	
+	}
+
+	
+		
+
+}
+
+function routes(req,res){
+	
+	for(var entry of routeMap.entries()){
+		if(req.url.search(new Regexp(entry.key)) >= 0){
+			entry.value(req.res);
+			return;
+		}
+	}
+		res.statusCode = 404;
+		res.end(`no handler found for your request URL ${req.url}`);
 }
 
 function isResource( sMatch, url){
@@ -173,7 +228,7 @@ function handleResponse(hostRes, res,req){
 			var redirect = res.getHeader("location");
 
 			if(redirect && retrieveDomainName(redirect) && (retrieveDomainName(redirect) === targetHostSetting.hostname)) {
-				res.setHeader("location",replaceDomain(redirect, _reqeustHeader.host ));	
+				res.setHeader("location",replaceDomain(redirect, req.headers.host ));	
 			}
 			hostRes.pipe(res);
 		}else if(__status >= 4){
@@ -187,6 +242,26 @@ function errResponse(err, res){
 		res.statusCode = 503;
 		res.statusMessage = err.message;
 		res.end(err.message);
+
+}
+
+function handlePersistence(req, res){
+		
+		fs.writeFile(cacheFile, JSON.stringify(__cache),(err)=>{
+			if(err){
+			
+				res.statusCode=500;
+				res.statusMessage = `persistence cache to file failed: ${err.message} `;
+				res.end(res.statusMessage);
+				return;
+			}
+				res.statusCode=200;
+				res.statusMessage = `persistence cache to file ${cacheFile} succeed`;
+				res.end(res.statusMessage);
+				
+		});
+		return;
+
 
 }
 
@@ -213,13 +288,12 @@ function serverCb(req, res) {
 
 	
 	var matched;
-
 	var _reqeustHeader = req.headers;
 	var _shouldCompress = needCompress(_reqeustHeader["accept-encoding"]);
 
 	if(matched = isResource(HMC_PATH, req.url)){
 
-		var _path = path.nomarlize("./" + matched);
+		var _path = path.normalize("./" + matched);
 		var ext = path.extname(_path).toLowerCase().replace("." , "");
 		var mime = MIME[ext] || MIME['text'];
 			
@@ -258,7 +332,8 @@ function serverCb(req, res) {
 					requestViaProxy({
 						path: req.url,
 						host:targetHostSetting.hostname,
-						method: req.method
+						method: req.method,
+						bodyData:req.bodyData
 					}, (err, endPointRes)=>{
 							
 						if(err){
@@ -288,11 +363,22 @@ function serverCb(req, res) {
 				__option.headers.host = targetHostSetting.hostname;
 
 				if(__option.hostname){
-					__option.path = (targetHostSetting.https?"https://":"http://") + targetHostSetting.hostname + req.url;
+						__option.path = (targetHostSetting.https?"https://":"http://") +  targetHostSetting.hostname + req.url;
+			
 				}else{
 					__option.hostname = targetHostSetting.hostname;
 					targetHostSetting.port&&(__option.port =targetHostSetting.port);
 					__option.path = req.url;
+				}
+				
+				if(targetHostSetting.https){
+						__option.strictSSL=false;
+						__option.agent = new https.Agent({
+							host: targetHostSetting.hostname
+							, port: targetHostSetting.port
+							, path: req.url
+							, rejectUnauthorized: false
+						});
 				}
 
 				var __req = (httpMode?http:https).request(__option,(hostRes)=>{
@@ -304,6 +390,11 @@ function serverCb(req, res) {
 					errResponse(e, res);
 
 				});
+				__req.setTimeout(10000, ()=>{
+					if(tryLoadLocalPage(req, res)) return;
+					errResponse({message:"request has timeout : 30000"}, res);
+				});	
+				req.bodyData&&__req.write(req.bodyData);			// post request body
 				__req.end();
 
 			}	
@@ -315,10 +406,10 @@ function serverCb(req, res) {
 }
 
 	var __sContent, __cache;
-
 	try{
 		__sContent = fs.readFileSync("./proxyCache.json",{encoding: "utf-8"});
-		__cache = eval(`(${__sContent})`)||{};
+	//	__cache = eval(`(${__sContent})`)||{};
+			__cache = JSON.parse(__sContent);
 
 	}catch(e){
 		__cache = {};
@@ -337,11 +428,11 @@ function serverCb(req, res) {
 			,agent: false
 			,path: target.host + ":443"  //"www3.lenovo.com:443"
 			,headers:{
-			host:target.host + ":443"  //"www3.lenovo.com:443"
+				host:target.host + ":443"  //"www3.lenovo.com:443"
 			}
 		}).on("connect", (proxyRes, socket, head)=>{
 			
-			https.request({
+			let proxyReq = https.request({
 				socket:socket,
 				agent: false,
 				host: target.host,
@@ -351,7 +442,10 @@ function serverCb(req, res) {
 				cb.call(null,null,res);
 			}).on("error",(err)=>{
 				reportError(err, cb);		
-			}).end();
+			})
+			
+			target.bodyData&&proxyReq.write(target.bodyData);
+			proxyReq.end();
 
 		}).on("error",(err)=>{
 			   reportError(err, cb);			
@@ -365,10 +459,10 @@ function serverCb(req, res) {
 		
 	}, __defaultSetting.proxy);
 	
-var server = httpMode ? http.createServer(serverCb) : https.createServer({
+var server = httpMode ? http.createServer(startProxy) : https.createServer({
     key: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/key.pem'),
     cert: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/cert.pem')
-}, serverCb);
+}, startProxy);
   
 server.listen(port);
 
