@@ -3,7 +3,12 @@
   "version": "1.0.0",
   "description": "proxy tool",
   "main": "proxy.js",
+  "config":{
+	"port":8079
+  },
+
   "scripts": {
+	"start": "node-debug proxy.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies":{

@@ -19,21 +19,7 @@ const cacheFile = "proxyCache.json";
 
 var argv = process.argv.slice();
 var httpMode = true;
-var cacheMode = false;
 
-argv.forEach(function(item){
-    if (/^--/.test(item)) {
-      switch(item) {
-        case "--http":
-        httpMode = true;
-        break;
-        case "--https":
-        httpMode = false;
-        break;
-      }
-      console.log(item);
-    }
-});
 
 var __defaultSetting = {
 
@@ -44,14 +30,14 @@ var __defaultSetting = {
 //		port:8080
 //	}
 	,persistent:"_service_persistent"
-	,onfig:"_service_config" 
+	,config:"_service_config" 
 
 };
 
 
-argv = argv.filter(function(item){
-    return !/^--/.test(item);
-});
+//argv = argv.filter(function(item){
+//    return !/^--/.test(item);
+//});
 
 var port = parseInt(argv[2]) || 8079;
 
@@ -81,7 +67,7 @@ if (/^https:\/\//.test(targetHostSetting.hostname)) {
 //	process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";  
 //}
 
-var MIME = {
+const MIME = {
     "js": "application/javascript",
     "json": "application/json",
     "mp3": "audio/mpeg",
@@ -103,27 +89,163 @@ var MIME = {
     "mp4": "video/mp4"
 };
 
-var routeMap = new Map([
-	[new RegExp("_service_persistent"),  handlePersistence]
-	,[new RegExp(".*"),serverCb]
 
-]);
+class ServerConfig{
+
+
+	static get __default(){
+	
+		return new Map([
+			["port", 8079],
+			["cacheLevel", 0],
+			["endpointServer.host","https://10.128.245.103" ],
+			["endpointServer.port", 9002],
+			["cacheFile","proxyCache.json" ]
+		]);
+	}
+
+	static get fields(){
+		return Array.from(ServerConfig.__default.keys());
+	}
+
+	constructor(){
+
+		let defaultMap = ServerConfig.__default;
+		for(let field of ServerConfig.fields){
+			
+			this.__assign(field,defaultMap.get(field) );		
+		}
+		
+	}
+	
+	 __assign(field,value){
+		if(field.indexOf(".")>=0){
+			let _aFields = field.split(".");
+			let _s = Symbol.for(_aFields[0])|| Symbol(_aFields[0]);
+			this[_s] = this[_s] || {};
+			this[_s][Symbol(_aFields[1])] = value;
+		}else{
+			this[Symbol.for(field) || Symbol(field)] = value;
+		}
+	}
+
+
+	loadEnvironmentConfig(){
+
+		const aKeys = ServerConfig.fields;
+		var args = {};
+
+		process.argv.slice().reduce((pre, item)=>{
+			let matches;
+			if((matches = pre.match(/^--(.*)/)) &&( aKeys.indexOf(matches[1].toLowerCase()) >= 0)){
+				args[matches[1].toLowerCase()] = item;
+			}	
+			return item;
+		});
+		let keys = 	Object.keys(args);
+		for(let key of keys){
+			this.__assign(key, args[key]);
+		};
+
+		return this;
+	}
+	
+	calConfig(){
+		
+
+
+		return this;
+	}
+
+}
+
+
+var config = new ServerConfig();
+config.loadEnvironmentConfig();
+console.log(Object.getOwnPropertySymbols(config));
+
+
+//Object.getOwnPropertySymbols(config).forEach((syn)=>{
+//	console.log(String(syn));
+//	console.log(config[syn]);
+//
+//});
+
+
+class Router{
+
+	constructor(){
+
+		this.routeMap = new Map([
+			[new RegExp(".*"),retrieveBody ]
+			,[new RegExp("_service_persistent"),  handlePersistence]
+			,[new RegExp(".*"),serverCb]
+
+		]);
+
+
+	}
+	route(req, res){
+
+		var iterator = this.routeMap[Symbol.iterator]();
+
+		function nextCallback(){
+
+			var item = iterator.next();
+			if(!item.done){
+				var handler = item.value;
+				if(handler[0].test(req.url)){
+					handler[1](req,res,nextCallback);
+				}else{
+					nextCallback();
+				}
+			}
+		}
+		nextCallback();
+	}
+
+
+}
+
+var router = new Router();
+
 
 const HMC_PATH = /\/resources66666\/(.*)/;
 
-function startProxy(req,res){
-	
+
+function retrieveBody(req,res,cb){
+
 	if(req.method.toUpperCase() === "POST"){
 		var __reqBody = "";
 		req.on("data", (data)=>{
 			__reqBody += data;
 		}).on("end",()=>{
 			req.bodyData = __reqBody;
-			serverCb(req,res);
+			cb();
 		});
 	}else{
-		serverCb(req,res);
+		cb();
 	}
+
+}
+
+function startProxy(req,res){
+
+	
+		router.route(req,res);
+
+	
+//	if(req.method.toUpperCase() === "POST"){
+//		var __reqBody = "";
+//		req.on("data", (data)=>{
+//			__reqBody += data;
+//		}).on("end",()=>{
+//			req.bodyData = __reqBody;
+//			serverCb(req,res);
+//		});
+//	}else{
+//		serverCb(req,res);
+//	}
 }
 
 class Proxy{
