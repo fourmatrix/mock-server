@@ -49,6 +49,9 @@ class ServerConfig{
 			,["endpointServer.port", 9002 ]
 			,["endpointServer.host", undefined ]
 			,["cacheFile","proxyCache.json" ]
+			,["SSLKey","/Users/i054410/Documents/develop/self-cert/key.pem" ]
+			,["SSLCert","/Users/i054410/Documents/develop/self-cert/cert.pem" ]
+
 		//	,["proxy.host","proxy.pal.sap.corp"]
 			//	,["proxy.port",8080]
 
@@ -133,6 +136,14 @@ class ServerConfig{
 		const aKeys = ServerConfig.fields;
 		var args = {};
 
+		// load from package.json first if start up by npm
+		aKeys.forEach((key)=>{
+			if(process.env["npm_package_config_" + key]){
+				this.__assign(key, process.env["npm_package_config_" + key]);
+			}
+		});
+
+		// load from command line
 		process.argv.slice().reduce((pre, item)=>{
 			let matches;
 			if((matches = pre.match(/^--(.*)/)) &&( aKeys.indexOf(matches[1].toLowerCase()) >= 0)){
@@ -481,8 +492,8 @@ var requestViaProxy = ((fn,proxyOp)=>{
 
 	
 var server = !config.isSSL() ? http.createServer(bind(oRouter.route,oRouter)) : https.createServer({
-    key: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/key.pem'),
-    cert: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/cert.pem')
+    key: fs.readFileSync(path.normalize(config.get("SSLKey"))),
+    cert: fs.readFileSync(path.normalize(config.get("SSLCert")))
 }, bind(oRouter.route,oRouter));
   
 server.listen(config.get("port"));
