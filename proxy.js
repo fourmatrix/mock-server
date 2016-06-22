@@ -5,7 +5,6 @@ const http = require("http")
 	 ,url = require("url")
 	 ,path = require("path")
 	 ,fs = require("fs")
-	 ,crypto = require("crypto")
 	 ,CacheStream = require("./cacheStream")
 	 ,gzipTranform = require('zlib').createGzip()
 	 ,request = require("request");
@@ -15,57 +14,6 @@ const cacheLevel = {
 	normal: 1,
 	first: 2
 };
-const cacheFile = "proxyCache.json";
-
-var argv = process.argv.slice();
-var httpMode = true;
-
-
-var __defaultSetting = {
-
-	port: 8079
-	,cacheLevel: 0
-//	,proxy:{
-//		hostname:"proxy.pal.sap.corp",
-//		port:8080
-//	}
-	,persistent:"_service_persistent"
-	,config:"_service_config" 
-
-};
-
-
-//argv = argv.filter(function(item){
-//    return !/^--/.test(item);
-//});
-
-var port = parseInt(argv[2]) || 8079;
-
-var targetHostSetting = {
- // hostname: argv[3] || "http://www3.lenovo.com",
-hostname: argv[3] || "https://10.128.245.103",
-  port: parseInt(argv[4]) || 9002,
-  https: false
-
-};
-
-
-
-if (/^https:\/\//.test(targetHostSetting.hostname)) {
-  targetHostSetting.hostname = targetHostSetting.hostname.replace(/^https:\/\//, "");
-  targetHostSetting.https = true;
-  httpMode = false;
-} else if (/^http:\/\//.test(targetHostSetting.hostname)) {
-  targetHostSetting.hostname = targetHostSetting.hostname.replace(/^http:\/\//, "");
-}
-
-/*
- * this can disable all SSL related check for entire node process
- * */
-
-//if(targetHostSetting.https){
-//	process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";  
-//}
 
 const MIME = {
     "js": "application/javascript",
@@ -92,41 +40,91 @@ const MIME = {
 
 class ServerConfig{
 
+	static getDefault(){
+		var __map =  new Map([
+			["port", 8079]
+			,["cacheLevel", 1]
+			,["endpointServer.address","https://10.128.245.103" ]
+		//	,["endpointServer.address","https://www3.lenovo.com"]
+			,["endpointServer.port", 9002 ]
+			,["endpointServer.host", undefined ]
+			,["cacheFile","proxyCache.json" ]
+		//	,["proxy.host","proxy.pal.sap.corp"]
+			//	,["proxy.port",8080]
 
-	static get __default(){
-	
-		return new Map([
-			["port", 8079],
-			["cacheLevel", 0],
-			["endpointServer.host","https://10.128.245.103" ],
-			["endpointServer.port", 9002],
-			["cacheFile","proxyCache.json" ]
 		]);
+
+		ServerConfig.getDefault = function(){
+			return __map;
+		}
+		return __map;
+
 	}
 
 	static get fields(){
-		return Array.from(ServerConfig.__default.keys());
+		return Array.from(ServerConfig.getDefault().keys());
+	}
+
+	get(key){
+
+		if(key ==="endpointServer.host"){
+			return this.get("endpointServer.address").match(/^http(?:s)?:\/\/([^\/]+)/)[1];
+		}
+
+		if(key.indexOf(".") >= 0){
+			let aKeys = key.split(".");
+			return this[this.__symbolMap.get(aKeys[0])][this.__symbolMap.get(key)];
+		}
+
+		let value = this[this.__symbolMap.get(key)];
+		if(typeof value ==="object"){
+			let __o = {};
+			ServerConfig.fields.forEach((_field)=>{
+				if(_field.indexOf(".") >= 0 &&_field.indexOf(key) >= 0 ){
+					let aFields = _field.split(".");
+					__o[aFields[1]] = this[this.__symbolMap.get(aFields[0])][this.__symbolMap.get(_field)];
+
+				}
+			});
+			return __o;
+		}
+		return value;
+	}
+
+	hasProxy(){
+		return !!this.get("proxy");
+	}
+
+	isSSL(){
+		return this.get("endpointServer.address").indexOf("https") >= 0;
 	}
 
 	constructor(){
 
-		let defaultMap = ServerConfig.__default;
+		let defaultMap = ServerConfig.getDefault();
+		this.__symbolMap = new Map();
 		for(let field of ServerConfig.fields){
-			
-			this.__assign(field,defaultMap.get(field) );		
+			this.__assign(field,defaultMap.get(field));		
 		}
-		
+
 	}
-	
-	 __assign(field,value){
+
+	__assign(field,value){
+
+		let _s = this.__retrieveSymbol(field);
 		if(field.indexOf(".")>=0){
 			let _aFields = field.split(".");
-			let _s = Symbol.for(_aFields[0])|| Symbol(_aFields[0]);
-			this[_s] = this[_s] || {};
-			this[_s][Symbol(_aFields[1])] = value;
+			let _subS = this.__retrieveSymbol(_aFields[0]);
+			this[_subS] = this[_subS] || {};
+			this[_subS][_s] = value;
+
 		}else{
-			this[Symbol.for(field) || Symbol(field)] = value;
+			this[_s] = value;
 		}
+	}
+
+	__retrieveSymbol(key){
+		return  this.__symbolMap.get(key) || this.__symbolMap.set(key, Symbol(key)).get(key);
 	}
 
 
@@ -146,12 +144,11 @@ class ServerConfig{
 		for(let key of keys){
 			this.__assign(key, args[key]);
 		};
-
 		return this;
 	}
-	
+
 	calConfig(){
-		
+
 
 
 		return this;
@@ -159,31 +156,69 @@ class ServerConfig{
 
 }
 
+class Cache{
 
-var config = new ServerConfig();
-config.loadEnvironmentConfig();
-console.log(Object.getOwnPropertySymbols(config));
+	constructor(config){
+		this.cacheLevel = config.get("cacheLevel");
+		this.cacheFile = path.normalize(config.get("cacheFile"));
+		try{
+			this.cache = JSON.parse(fs.readFileSync(this.cacheFile,{encoding: "utf-8"}));
 
+		}catch(e){
+			this.cache = {};
+		}	
+	}	
 
-//Object.getOwnPropertySymbols(config).forEach((syn)=>{
-//	console.log(String(syn));
-//	console.log(config[syn]);
-//
-//});
+	tryLoadLocalPage(req, res){
+		if(this.cacheLevel > cacheLevel.no){
+			let __cacheRes = this.cache[this.generateCacheKey(req)];
+			if(__cacheRes){
+				res.statusCode = "200";
+				Object.keys(__cacheRes.header).forEach((item)=>{
+					res.setHeader(item, __cacheRes.header[item] );
+				});
 
+				res.end(__cacheRes.data);
+				return true;
+			}	
+		}
+		return false;
+
+	}
+
+	generateCacheKey(req){
+		return req.method + req.url;
+	}
+
+	handlePersistence(req,res){
+			fs.writeFile(this.cacheFile, JSON.stringify(this.cache),(err)=>{
+			if(err){
+				res.statusCode=500;
+				res.statusMessage = `persistence cache to file failed: ${err.message} `;
+				res.end(res.statusMessage);
+				return;
+			}
+				res.statusCode=200;
+				res.statusMessage = `persistence cache to file ${this.cacheFile} succeed`;
+				res.end(res.statusMessage);
+				
+		});
+		return;	
+	}
+
+}
 
 class Router{
 
 	constructor(){
 
 		this.routeMap = new Map([
-			[new RegExp(".*"),retrieveBody ]
-			,[new RegExp("_service_persistent"),  handlePersistence]
+			 [new RegExp(".*"),retrieveBody ]
+			,[new RegExp("_service_persistent"), bind( oCache.handlePersistence, oCache)]
+			,[new RegExp("/resources66666/(.*)"), handleResource]
 			,[new RegExp(".*"),serverCb]
 
 		]);
-
-
 	}
 	route(req, res){
 
@@ -195,7 +230,7 @@ class Router{
 			if(!item.done){
 				var handler = item.value;
 				if(handler[0].test(req.url)){
-					handler[1](req,res,nextCallback);
+					handler[1](req,res,nextCallback, handler[0]);
 				}else{
 					nextCallback();
 				}
@@ -203,15 +238,7 @@ class Router{
 		}
 		nextCallback();
 	}
-
-
 }
-
-var router = new Router();
-
-
-const HMC_PATH = /\/resources66666\/(.*)/;
-
 
 function retrieveBody(req,res,cb){
 
@@ -229,197 +256,20 @@ function retrieveBody(req,res,cb){
 
 }
 
-function startProxy(req,res){
-
-	
-		router.route(req,res);
-
-	
-//	if(req.method.toUpperCase() === "POST"){
-//		var __reqBody = "";
-//		req.on("data", (data)=>{
-//			__reqBody += data;
-//		}).on("end",()=>{
-//			req.bodyData = __reqBody;
-//			serverCb(req,res);
-//		});
-//	}else{
-//		serverCb(req,res);
-//	}
-}
-
-class Proxy{
-
-	constructor(){
-	  this.aRoutes = [
-		{
-			
-		}
-	  
-	  ];
+function bind(fn, context){
+	return function(){
+		return fn.apply(context, [].slice.call(arguments));
 	}
-
-	config(){
-	
-	
-	}
-
-	
-		
-
 }
 
-function routes(req,res){
-	
-	for(var entry of routeMap.entries()){
-		if(req.url.search(new Regexp(entry.key)) >= 0){
-			entry.value(req.res);
-			return;
-		}
-	}
-		res.statusCode = 404;
-		res.end(`no handler found for your request URL ${req.url}`);
-}
+function handleResource(req, res, cb, matches){
 
-function isResource( sMatch, url){
-
-	let aMatch = url.match(sMatch);
-	return aMatch?aMatch[1]:aMatch;
-}
-
-function needCompress(accept){
-	return accept.search(/gzip|deflate/) >= 0;
-}
-
-function generateCacheKey(req){
-	return req.method + req.url;
-}
-
-function retrieveDomainName(url){
-	
-	var aResults = url.match(/^http(?:s)?:\/\/([^\/]+)\/.*$/);
-	return aResults&&aResults[1];
-
-}
-
-function replaceDomain(url, domain){
-	
-	return url.replace(/^(http(?:s)?:\/\/)(?:[^\/]+)(\/.*)$/, "$1" + domain + "$2");
-}
-
-function loadFromCache(req, cache){
-	return cache[generateCacheKey(req)];
-}
-
-function tryLoadLocalPage(req,res){
-		if(__defaultSetting.cacheLevel > cacheLevel.no){
-						let __cacheRes = loadFromCache(req, __cache);
-						if(__cacheRes){
-							res.statusCode = "200";
-						Object.keys(__cacheRes.header).forEach((item)=>{
-							res.setHeader(item, __cacheRes.header[item] );
-						});
-
-							res.end(__cacheRes.data);
-							return true;
-						}	
-					}
-			return false;
-}
-
-function handleResponse(hostRes, res,req){
-		res.statusCode = hostRes.statusCode;
-
-		Object.keys(hostRes.headers).forEach((item)=>{
-			res.setHeader(item, hostRes.headers[item] );
-		});
-
-		var __status = Math.floor(hostRes.statusCode/100);
-
-		if(__status === 2){
-
-			if(__defaultSetting.cacheLevel > cacheLevel.no){
-				hostRes.pipe(new CacheStream({key: generateCacheKey(req),cache: __cache, header:Object.assign({},hostRes.headers)})).pipe(res);
-			}else{
-				hostRes.pipe(res);
-			}
-
-		}else if(__status === 3){
-
-			console.log(`status is ${__status}`);
-			var redirect = res.getHeader("location");
-
-			if(redirect && retrieveDomainName(redirect) && (retrieveDomainName(redirect) === targetHostSetting.hostname)) {
-				res.setHeader("location",replaceDomain(redirect, req.headers.host ));	
-			}
-			hostRes.pipe(res);
-		}else if(__status >= 4){
-			console.log(`status is ${__status}`);
-			if(tryLoadLocalPage(req, res)) return;
-			hostRes.pipe(res);
-		}
-}
-
-function errResponse(err, res){
-		res.statusCode = 503;
-		res.statusMessage = err.message;
-		res.end(err.message);
-
-}
-
-function handlePersistence(req, res){
-		
-		fs.writeFile(cacheFile, JSON.stringify(__cache),(err)=>{
-			if(err){
+		let matched  = req.url.match(matches[1])[1];
+		let _path = path.normalize("./" + matched);
+		let ext = path.extname(_path).toLowerCase().replace("." , "");
+		let mime = MIME[ext] || MIME['text'];
 			
-				res.statusCode=500;
-				res.statusMessage = `persistence cache to file failed: ${err.message} `;
-				res.end(res.statusMessage);
-				return;
-			}
-				res.statusCode=200;
-				res.statusMessage = `persistence cache to file ${cacheFile} succeed`;
-				res.end(res.statusMessage);
-				
-		});
-		return;
-
-
-}
-
-function serverCb(req, res) {
-	
-	if(req.url.match(__defaultSetting.persistent)){
-	
-		fs.writeFile(cacheFile, JSON.stringify(__cache),(err)=>{
-			if(err){
-			
-				res.statusCode=500;
-				res.statusMessage = `persistence cache to file failed: ${err.message} `;
-				res.end(res.statusMessage);
-				return;
-			}
-				res.statusCode=200;
-				res.statusMessage = `persistence cache to file ${cacheFile} succeed`;
-				res.end(res.statusMessage);
-				
-		});
-		return;
-		
-	}
-
-	
-	var matched;
-	var _reqeustHeader = req.headers;
-	var _shouldCompress = needCompress(_reqeustHeader["accept-encoding"]);
-
-	if(matched = isResource(HMC_PATH, req.url)){
-
-		var _path = path.normalize("./" + matched);
-		var ext = path.extname(_path).toLowerCase().replace("." , "");
-		var mime = MIME[ext] || MIME['text'];
-			
-		var fileRaw = fs.createReadStream(_path);
+		let fileRaw = fs.createReadStream(_path);
 		
 		fileRaw.on("open", ()=>{
 			res.writeHead(200,{
@@ -436,128 +286,176 @@ function serverCb(req, res) {
 
 		});
 
-		fileRaw.pipe(gzipTranform).pipe(res);
-				
-	}else{
+		fileRaw.pipe(gzipTranform).pipe(res);	
+
+}
+
+
+
+function retrieveDomainName(url){
+	
+	var aResults = url.match(/^http(?:s)?:\/\/([^\/]+)\/.*$/);
+	return aResults&&aResults[1];
+
+}
+
+function replaceDomain(url, domain){
+	
+	return url.replace(/^(http(?:s)?:\/\/)(?:[^\/]+)(\/.*)$/, "$1" + domain + "$2");
+}
+
+function handleResponse(hostRes, res,req){
+		res.statusCode = hostRes.statusCode;
+
+		Object.keys(hostRes.headers).forEach((item)=>{
+			res.setHeader(item, hostRes.headers[item] );
+		});
+
+		var __status = Math.floor(hostRes.statusCode/100);
+
+		if(__status === 2){
+
+			if(config.get("cacheLevel") > cacheLevel.no){
+				hostRes.pipe(new CacheStream({key: oCache.generateCacheKey(req),cache: oCache.cache, header:Object.assign({},hostRes.headers)})).pipe(res);
+			}else{
+				hostRes.pipe(res);
+			}
+
+		}else if(__status === 3){
+
+			console.log(`status is ${__status}`);
+			var redirect = res.getHeader("location");
+
+			if(redirect && retrieveDomainName(redirect) && (retrieveDomainName(redirect) === config.get("endpointServer.host"))) {
+				res.setHeader("location",replaceDomain(redirect, req.headers.host ));	
+			}
+			hostRes.pipe(res);
+		}else if(__status >= 4){
+			console.log(`status is ${__status}`);
+			if(oCache.tryLoadLocalPage(req, res)) return;
+			hostRes.pipe(res);
+		}
+}
+
+function errResponse(err, res){
+		res.statusCode = 503;
+		res.statusMessage = err.message;
+		res.end(err.message);
+
+}
+
+function serverCb(req, res) {
+	
+	//var matched;
+	var _reqeustHeader = req.headers;
 		
-		if(__defaultSetting.cacheLevel === cacheLevel.first){     // cache first
-			if(!tryLoadLocalPage(req, res)){
+		if(config.get("cacheLevel") === cacheLevel.first){     // cache first
+			if(!oCache.tryLoadLocalPage(req, res)){
 				res.statusCode = 404;
 				res.end(`can not find cache for ${req.url}`);
 				return;
 			}
-			
 		}else{
-			
-			if(!httpMode && __defaultSetting.proxy ){	// https via proxy
-				
-					requestViaProxy({
-						path: req.url,
-						host:targetHostSetting.hostname,
-						method: req.method,
-						bodyData:req.bodyData
-					}, (err, endPointRes)=>{
-							
-						if(err){
-							if(__defaultSetting.cacheLevel > cacheLevel.no){
-								if(tryLoadLocalPage(req, res)) return;
-							}
-							errResponse(err, res);						
-						}else{
-							handleResponse(endPointRes, res,req);	
 
-						}
+				var __option = {},
+				endServerHost = config.get("endpointServer.host"),
+				endServerPort = config.get("endpointServer.port");
 
-					});
-
-//			request({'url':'https://www3.lenovo.com/au/en/login',
-//					 'proxy':'http://proxy.pal.sap.corp:8080'}, function (error, response, body) {
-//			  if (!error && response.statusCode == 200) {
-//				console.log(body) // Print the google web page.
-//			  }
-//			});
-
-			}else{
-
-				var __option = Object.assign({},__defaultSetting.proxy);
 				__option.method = req.method;
 				__option.headers=Object.assign(__option.headers || {}, _reqeustHeader);
-				__option.headers.host = targetHostSetting.hostname;
-
-				if(__option.hostname){
-						__option.path = (targetHostSetting.https?"https://":"http://") +  targetHostSetting.hostname + req.url;
+				__option.headers.host = endServerHost;
+				if(config.hasProxy()){
+					
+					let oProxy = config.get("proxy");
+					__option.hostname =  oProxy.host;
+					__option.port = oProxy.port;
+					__option.path = config.get("endpointServer.address") + req.url;
 			
 				}else{
-					__option.hostname = targetHostSetting.hostname;
-					targetHostSetting.port&&(__option.port =targetHostSetting.port);
+					__option.hostname = __option.headers.host;
+					(endServerPort)&&(__option.port =endServerPort);
 					__option.path = req.url;
 				}
 				
-				if(targetHostSetting.https){
+				if(config.isSSL()){
 						__option.strictSSL=false;
 						__option.agent = new https.Agent({
-							host: targetHostSetting.hostname
-							, port: targetHostSetting.port
+							  host: endServerHost
+							, port: endServerPort
 							, path: req.url
 							, rejectUnauthorized: false
 						});
 				}
 
-				var __req = (httpMode?http:https).request(__option,(hostRes)=>{
+			if(config.isSSL() && config.hasProxy() ){	// https via proxy
+				
+					requestViaProxy({
+						path: req.url,
+						host:endServerHost,
+						prot:endServerPort,
+						method: req.method,
+						bodyData:req.bodyData
+					}, (err, endPointRes)=>{
+						if(err){
+							if(config.get("cacheLevel") > cacheLevel.no){
+								if(oCache.tryLoadLocalPage(req, res)) return;
+							}
+							errResponse(err, res);						
+						}else{
+							handleResponse(endPointRes, res,req);	
+						}
+
+					});
+
+			}else{
+				var __req = (config.isSSL()?https:http).request(__option,(hostRes)=>{
 						handleResponse(hostRes, res,req);
 				});
 
 				__req.on("error", (e)=>{
-					if(tryLoadLocalPage(req, res)) return;
+					if(oCache.tryLoadLocalPage(req, res)) return;
 					errResponse(e, res);
 
 				});
-				__req.setTimeout(10000, ()=>{
-					if(tryLoadLocalPage(req, res)) return;
-					errResponse({message:"request has timeout : 30000"}, res);
+				__req.setTimeout(1000000, ()=>{
+					if(oCache.tryLoadLocalPage(req, res)) return;
+					errResponse({message:"request has timeout : 10000"}, res);
 				});	
 				req.bodyData&&__req.write(req.bodyData);			// post request body
 				__req.end();
 
 			}	
 		}
-				
-	
-	}
+	//}
 
 }
-
-	var __sContent, __cache;
-	try{
-		__sContent = fs.readFileSync("./proxyCache.json",{encoding: "utf-8"});
-	//	__cache = eval(`(${__sContent})`)||{};
-			__cache = JSON.parse(__sContent);
-
-	}catch(e){
-		__cache = {};
-	}
-	
-	var requestViaProxy = ((fn,proxyOp)=>{
+var config = new ServerConfig();
+config.loadEnvironmentConfig();
+var oCache = new Cache(config);
+var oRouter = new Router();	
+var requestViaProxy = ((fn,proxyOp)=>{
 		return function(){
 			fn.apply(null, [proxyOp].concat([].slice.call(arguments)));
 		};
 	})((proxyOp, target, cb)=>{
 		
+		var targetPort = ":" + (target.port || 443 );
+
 		http.request({
-			 host:proxyOp.hostname
+			 hostname:proxyOp.host
 			,port:proxyOp.port
 			,method:"CONNECT"
 			,agent: false
-			,path: target.host + ":443"  //"www3.lenovo.com:443"
+			,path: target.host + targetPort  //"www3.lenovo.com:443"
 			,headers:{
-				host:target.host + ":443"  //"www3.lenovo.com:443"
+				host:target.host + targetPort  //"www3.lenovo.com:443"
 			}
 		}).on("connect", (proxyRes, socket, head)=>{
 			
 			let proxyReq = https.request({
 				socket:socket,
 				agent: false,
-				host: target.host,
+				hostname: target.host,
 				path: target.path,
 				method: target.method
 			}, (res)=>{
@@ -579,13 +477,14 @@ function serverCb(req, res) {
 				cb.call(null, err);	
 		}
 		
-	}, __defaultSetting.proxy);
+	}, config.get("proxy")|| {});
+
 	
-var server = httpMode ? http.createServer(startProxy) : https.createServer({
+var server = !config.isSSL() ? http.createServer(bind(oRouter.route,oRouter)) : https.createServer({
     key: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/key.pem'),
     cert: fs.readFileSync('/Users/i054410/Documents/develop/self-cert/cert.pem')
-}, startProxy);
+}, bind(oRouter.route,oRouter));
   
-server.listen(port);
+server.listen(config.get("port"));
 
-console.log(`Server is running at 127.0.0.1, port ${port}`);
+console.log(`Server is running at 127.0.0.1 , port ${config.get("port")}`);
