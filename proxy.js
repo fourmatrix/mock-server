@@ -2,7 +2,7 @@
 
 const http = require("http")
 	 ,https = require("https")
-	 ,url = require("url")
+	
 	 ,path = require("path")
 	 ,fs = require("fs")
 	 ,CacheStream = require("./cacheStream")
@@ -93,7 +93,6 @@ class ServerConfig{
 		}
 		return value;
 	}
-
 	hasProxy(){
 		return !!this.get("proxy");
 	}
