@@ -4,9 +4,11 @@ const http = require("http")
 	 ,https = require("https")
 	
 	 ,path = require("path")
+//	 ,Buffer = require("buffer")
 	 ,fs = require("fs")
 	 ,CacheStream = require("./cacheStream")
-	 ,gzipTranform = require('zlib').createGzip()
+	 ,zlib = require('zlib')
+	 ,ejs = require("ejs")
 	 ,request = require("request");
 
 const cacheLevel = {
@@ -44,14 +46,14 @@ class ServerConfig{
 		var __map =  new Map([
 			["port", 8079]
 			,["cacheLevel", 1]
-			,["endpointServer.address","https://10.128.245.103" ]
+			,["endpointServer.address","https://localhost" ]
 		//	,["endpointServer.address","https://www3.lenovo.com"]
 			,["endpointServer.port", 9002 ]
-			,["endpointServer.host", undefined ]
+			,["endpointServer.host", undefined]
 			,["cacheFile","proxyCache.json" ]
 			,["SSLKey","/Users/i054410/Documents/develop/self-cert/key.pem" ]
 			,["SSLCert","/Users/i054410/Documents/develop/self-cert/cert.pem" ]
-
+			,["relativePath","./../test-stuff/hybris-commerce-suite-6.0.0.0/hybris/bin/custom/myTest/myTeststorefront/web/webroot/"]
 		//	,["proxy.host","proxy.pal.sap.corp"]
 			//	,["proxy.port",8080]
 
@@ -159,8 +161,6 @@ class ServerConfig{
 
 	calConfig(){
 
-
-
 		return this;
 	}
 
@@ -225,7 +225,8 @@ class Router{
 		this.routeMap = new Map([
 			 [new RegExp(".*"),retrieveBody ]
 			,[new RegExp("_service_persistent"), bind( oCache.handlePersistence, oCache)]
-			,[new RegExp("/resources66666/(.*)"), handleResource]
+			,[new RegExp("/__server_config__(.*)"),handleServerConfiguration ]
+			,[new RegExp("/_ui/(.*)"), handleResource]
 			,[new RegExp(".*"),serverCb]
 
 		]);
@@ -250,6 +251,27 @@ class Router{
 	}
 }
 
+class View{
+
+	constructor(){
+		this.engine = ejs;
+	}
+
+	render(viewName,data, ops, cb){
+
+		if(typeof ops === "function"){
+			cb = ops;
+			ops = {};
+		}
+		this.engine.renderFile(viewName,data, ops, cb);
+		
+	}
+
+
+}
+
+
+
 function retrieveBody(req,res,cb){
 
 	if(req.method.toUpperCase() === "POST"){
@@ -272,10 +294,10 @@ function bind(fn, context){
 	}
 }
 
-function handleResource(req, res, cb, matches){
+function handleResource(req, res, cb, urlPart){
 
-		let matched  = req.url.match(matches[1])[1];
-		let _path = path.normalize("./" + matched);
+		let matched  = req.url.match(urlPart)[0];
+		let _path = path.normalize(config.get("relativePath") + matched);
 		let ext = path.extname(_path).toLowerCase().replace("." , "");
 		let mime = MIME[ext] || MIME['text'];
 			
@@ -296,7 +318,39 @@ function handleResource(req, res, cb, matches){
 
 		});
 
-		fileRaw.pipe(gzipTranform).pipe(res);	
+		fileRaw.pipe(zlib.createGzip()).pipe(res);	
+
+}
+
+function handleServerConfiguration(req, res, cb, urlPart){
+
+	let matched = req.url.match(urlPart)[1].trim();
+	let viewName = matched || "config";
+	let _path = path.join("./",viewName + ".ejs");
+
+	oView.render(_path,{}, (err, str)=>{
+
+		if(err){
+			console.error(err.message);
+			res.writeHead("500","render error");
+			res.end();
+			return;	
+		}
+		zlib.gzip(new Buffer(str), (err, buffer)=>{
+			if(!err){
+				res.writeHead(200, {
+					"Content-Type":"text/html",
+					"content-encoding":"gzip"
+				});
+				res.write(buffer);
+			}else{
+				console.error(err.message);
+				res.writeHead("500","compress error");
+			}
+			res.end();			
+		});	
+
+	} );
 
 }
 
@@ -443,6 +497,7 @@ var config = new ServerConfig();
 config.loadEnvironmentConfig();
 var oCache = new Cache(config);
 var oRouter = new Router();	
+var oView = new View();
 var requestViaProxy = ((fn,proxyOp)=>{
 		return function(){
 			fn.apply(null, [proxyOp].concat([].slice.call(arguments)));
