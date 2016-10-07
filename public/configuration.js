@@ -37,20 +37,12 @@
 				},
 				function(data){
 					if(data && data !=="no_change"){
-						var newService = true;
-						$("td.service-url").each((inx,ele)=>{
-							if($(ele).text()===data.url){
-								return newService = false;
-							}
-						});
 
-						if(newService){
-							var serviceTd = $("<td class='service-url'>").text(data.url);
-							var actionTd = $('<td><a class="edit">edit</a><a class="delete">delete</a></td>');
-							var paramTd = $("<td>");
-							var methodTd = $("<td>");
-							$("table").append($("<tr>").append(serviceTd).append(methodTd).append(paramTd).append(actionTd));
-						}
+						var serviceTd = $("<td class='service-url'>").text(data.url);
+						var actionTd = $('<td><a class="edit">edit</a><a class="delete">delete</a></td>');
+						var paramTd = $("<td class='service-param'>").text(data.param);
+						var methodTd = $("<td class='service-method'>").text(data.method);
+						$("table").append($("<tr>").append(serviceTd).append(methodTd).append(paramTd).append(actionTd));
 					}
 				}
 			);
@@ -59,21 +51,30 @@
 		$("table").on("click",".delete", function(e){
 
 			var $targetTd = $(e.currentTarget).parent();
-			var url = $targetTd.siblings(".service-url").text().trim();
-			$.post("/__server_config__/delete_service_config", {data: url}, function(data){
+			$.post("/__server_config__/delete_service_config", {
+				serviceUrl: $targetTd.siblings(".service-url").text().trim(),
+				serviceMethod: $targetTd.siblings(".service-method").text().trim(),
+				serviceParam:  $targetTd.siblings(".service-param").text().trim(),
+			}, 
+			function(data){
 				if(data && data.url){
 					$targetTd.parent().remove();
 				}			
 			});
 		});
 
-
 		$("table").on("click",".edit", function(e){
 			var $targetTd = $(e.currentTarget).parent();
-			var url = $targetTd.siblings(".service-url").text().trim();
-			$.get("/__server_config__/load_service?data=" + url, function(data){
-				if(data && data.url){
-					$targetTd.parent().remove();
+			$.get("/__server_config__/load_service",{
+				serviceUrl: $targetTd.siblings(".service-url").text().trim(),
+				serviceMethod: $targetTd.siblings(".service-method").text().trim(),
+				serviceParam: $targetTd.siblings(".service-param").text().trim()
+			}, function(oData){
+				if(oData && oData.url){
+					$("#service-method").val(oData.method);
+					$("#service-url").val(oData.url);
+					$('#service-data').val(oData.data);
+					$('#service-param').val(oData.param)
 				}			
 			});
 		});

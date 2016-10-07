@@ -78,7 +78,7 @@ textArea{
 					</thead>
 
 					<% serviceList.forEach((service)=>{ %>
-					<tr><td class="service-url"><%=service %></td><td></td><td></td><td><a class="edit">edit</a><a class="delete">delete</a></td></tr>	
+					<tr><td class="service-url"><%=service.url %></td><td class="service-method"><%=service.method %></td><td class="service-param"><%=service.param %></td><td><a class="edit">edit</a><a class="delete">delete</a></td></tr>	
 					<%}) %>
 				</table>
 

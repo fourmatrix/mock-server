@@ -338,17 +338,12 @@ const http = require("http")
 		
 		}catch(e){
 			fs.writeFile(SERVICE_CONFIG, '');
-			return [];
 		}
 	  }
 
 	  getServiceList(){
 		return this.serviceMap;
 	  }
-
-	  //	  hasService(url){
-	  //		  return this.serviceMap.some(service=>service === url);
-	  //	  }
 
 	  __saveServiceList(oService){
 
@@ -360,18 +355,30 @@ const http = require("http")
 						resolve(oService);
 					}
 				});
-
-		  
 		  });
+	  }
 
+	  __hasService(oService){
+		  return this.__findService(oService) >= 0;  
+	  }
+
+	  __findService(oService){
 	  
+	  return this.serviceMap.findIndex(service=>{
+				  if(oService.method === 'get'){
+					return service.url === oService.url && service.method === oService.method&& service.param === oService.param;
+				  }else{
+					return service.url === oService.url && service.method === oService.method;
+				  }
+				 });
+
 	  }
 
 	  addServiceURL(oService){
-
+	
 		  return new Promise((resolve, reject)=>{
-		  
-		  	if(!this.serviceMap.some(service=>service.url === oService.url && service.method === oService.method&& service.param === oService.param)){
+				// only get can support multi param
+			  if(!this.__hasService(oService)){
 				this.serviceMap.push(oService);
 
 				this.__saveServiceList(oService).then((data)=>{
@@ -392,10 +399,7 @@ const http = require("http")
 				resolve("no_change");
 			
 			}
-
-			
 		  });
-
 	  }
 
 	  generatePath(oService){
@@ -403,24 +407,24 @@ const http = require("http")
 	  }
 
 	  __generateKey(oService){
-		JSON.stringify(oService.param);
+		 return (oService.method === "get" && oService.param.length > 0)? oService.param: "data";
 	  }
-
-
-
 	  addService(oService){
 
 		  var _path = this.generatePath(oService);
 		  // support multi-param only for GET method
 		
-		  var _key = (oService.method === "get" && oService.param.length > 0)? oService.param: "data";
+		  var _key = this.__generateKey(oService);
 
 		  return new Promise((resolve, reject)=>{
 			
-				  fs.readFile(_path,(err,data)=>{
+				  fs.readFile(_path,'utf-8',(err,data)=>{
 
 					  if(err){
-						  fs.writeFile(_path, JSON.stringify({_key: oService.data}),'utf-8', (err)=>{
+
+						  let _oCache = {};
+						  _oCache[_key] = oService.data;
+						  fs.writeFile(_path, JSON.stringify(_oCache),'utf-8', (err)=>{
 							  if(err){
 								  reject(err);
 							  }else{
@@ -444,34 +448,75 @@ const http = require("http")
 		  });
 	  }
 
-	  __deleteFile(_path){
+	  __deleteService(oService){
 
-		  return new Promise((resolve, reject)=>{
-			  fs.unlink(_path, (err)=>{
+		  var _path = this.generatePath(oService);
+	return new Promise((resolve, reject)=>{
+
+		  if(oService.method === 'get' && oService.param.length > 0){
+			
+			  fs.readFile(_path,'utf-8',(err, data)=>{
 				  if(err){
+					  console.error(err);
+					  reject(err);
+					}else{
+						let oData = JSON.parse(data);
+						delete oData[oService.param];
+						fs.writeFile(_path, "utf-8",err=>{
+							if(err){
+								console.error(err);
+								reject(err);
+							}else{
+								resolve(oService);
+							}
+						});
+					}
+			  } );
+		  }else{
+			fs.unlink(_path, (err)=>{
+				if(err){
+					console.error(err);
 					reject(err);
 				  }else{
-					resolve();
+					resolve(oService);
 				  }
 			  });
-		  });
-	  
+		  }
+		    });
+
 	  }
-	  deleteService(_url){
+	  deleteService(oService){
 		  return new Promise((resolve, reject)=>{
 				
-			  if(!this.serviceMap.some(service=>service === _url)){
+			  if(!this.__hasService(oService)){
 					resolve("no_change");	
 			  }else{
-				  this.serviceMap.splice(this.serviceMap.indexOf(_url), 1);
+				  this.serviceMap.splice(this.__findService(oService), 1);
 				
-				  var _path = this.generatePath(_url.replace(/\//g, "_"));
-					  Promise.all([this.__saveServiceList(_url), this.__deleteFile(_path)]).then(data=>{
-						resolve(_url);
+				Promise.all([this.__saveServiceList(oService), this.__deleteService(oService)]).then(data=>{
+						resolve(data);
 					  }).catch(err=>{
 						reject(err);
 					  });
 			  }
+		  });
+	  }
+
+	  loadServiceData(oService){
+			
+		  return new Promise((resolve, reject)=>{
+				var _path = this.generatePath(oService);
+				fs.readFile(_path,'utf-8', (err,data)=>{
+					if(err){
+						console.error(err);
+						resolve('no-data');
+					}else{
+						let rootKey = this.__generateKey(oService);
+						data = JSON.parse(data);
+						resolve(data[rootKey]);
+					}
+				});
+			  
 		  });
 	  }
  }
@@ -696,8 +741,8 @@ const http = require("http")
  };
 
  function handleServerConfiguration(req, res, cb, urlPart){
-
-	 let matched = req.url.match(urlPart)[1].trim();
+	 let aMathed = req.url.match(urlPart)[1].trim().split('?');
+	 let matched = aMathed[0];
 	 if(matched.indexOf('/view') === 0){
 
 		 let viewName = matched.slice(1).split("/")[1] || "config" ;
@@ -730,10 +775,12 @@ const http = require("http")
 
 	 }else{
 		 // handle action from configuration page
+
+		 let oService = {};
 		 switch(matched){
 			 case '/save_server_config':
 
-				 extractParam(req).map(pair=>{
+				 extractParam(req.bodyData).map(pair=>{
 					 config.set(pair.key, pair.val);
 				 });
 
@@ -767,31 +814,14 @@ const http = require("http")
 
 			 case '/save_service_config':
 
-				 let _path = '', rootKey = 'data', _data, _url, _method, _param, oService = {};
-				 extractParam(req).map(pair=>{
-					 if(pair.key === 'serviceUrl'){
-						 //	 let _k = pair.val.split("?");
-						 oService.url = pair.val;
-						 oService.path = pair.val.replace(/\//g, "_");
-							 //	 rootKey = _k[1] || rootKey;
-					 }else if(pair.key === 'serviceData'){
-						 if(pair.val && pair.val.length > 0){
-							 oService.data = pair.val;		
-						 }		 
-					 }else if (pair.key === 'serviceMethod'){
-						oService.method = pair.val.toLowerCase();	
-					 
-					 }else if (pair.key === 'serviceParam'){
-						oService.param = pair.val;	
-					 }
-				 });
+				 extractParam(req.bodyData).map(bind(mapParam,oService));
 
 				 if(oService.data){
 					 Promise.all([serviceConfig.addServiceURL(oService),serviceConfig.addService(oService )]).then(args=>{
 							 res.writeHead(200,{
 							 "Content-Type":MIME.json
 							 });
-						 res.end(JSON.stringify({data: args[0]}));		
+						 res.end(JSON.stringify(args[0]));		
 
 					 }).catch(err=>{
 						 res.statusCode=500;
@@ -803,7 +833,7 @@ const http = require("http")
 						 res.writeHead(200,{
 							 "Content-Type":MIME.json
 						 });
-						 res.end(JSON.stringify({url: args[0]}));			
+						 res.end(JSON.stringify(args));			
 					 }).catch(err=>{
 						 res.statusCode=500;
 						 res.statusMessage = err.message;
@@ -812,9 +842,9 @@ const http = require("http")
 				 }
 				 break;
 			 case "/delete_service_config":	
-				
-				 var serviceUrl = extractParam(req)[0]['val'];
-				 serviceConfig.deleteService(serviceUrl).then(data=>{
+
+				 extractParam(req.bodyData).map(bind(mapParam,oService));
+				 serviceConfig.deleteService(oService).then(data=>{
 						res.writeHead(200,{
 							 "Content-Type":MIME.json
 						 });
@@ -826,13 +856,44 @@ const http = require("http")
 				 }); 
 				 break;
 
-			 case 'load_service':
-				 
+			 case '/load_service':
+				 extractParam(aMathed[1]).map(bind(mapParam,oService));
+				 serviceConfig.loadServiceData(oService).then((data)=>{
+						 res.writeHead(200,{
+							 "Content-Type":MIME.json
+						 });
+						oService.data = data;
+
+						 res.end(JSON.stringify(oService));	
+				 }).catch(err=>{
+					 res.statusCode=500;
+					 res.statusMessage = err.message;
+					 res.end(res.statusMessage);	
+				 });
+				 break;
+		 }
+
+
+		 function mapParam(pair){
+					if(pair.key === 'serviceUrl'){
+						 this.url = pair.val;
+						 this.path = pair.val.replace(/\//g, "_");
+					 }else if(pair.key === 'serviceData'){
+						 if(pair.val && pair.val.length > 0){
+							 this.data = pair.val;		
+						 }		 
+					 }else if (pair.key === 'serviceMethod'){
+						this.method = pair.val.toLowerCase();	
+					 
+					 }else if (pair.key === 'serviceParam'){
+						this.param = pair.val;	
+					 }
+
 		 }
 	 }
 
-	 function extractParam(req){
-				return req.bodyData.split("&").map(pair=>{
+	 function extractParam(sTarget){
+				return sTarget.split("&").map(pair=>{
 					 let aParam = pair.split("=");
 					 return {
 						 key: aParam[0],
