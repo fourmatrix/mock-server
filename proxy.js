@@ -12,9 +12,15 @@ const http = require("http")
 	 ,request = require("request");
 
  const cacheLevel = {
-	 no: 0,
-	 normal: 1,
-	 first: 2
+	 no: 0,				// cache no will load data only from endpoint server, but ignore cache
+	 normal: 1,			// cache normal will load data from endpoint server first, if no, then try to load data from cache, and persistent server data to cache
+	 first: 2			// cache first will load data from cache, but ignore enpoint server
+ };
+
+ const workingMode = {
+	 proxyCache: 0,
+	 serviceProvider: 1
+
  };
  const SERVER_CONFIG = './_config/serverConfig.json';
  const SERVICE_CONFIG = './_config/serviceConfig.json';
@@ -67,7 +73,8 @@ const http = require("http")
 	 static getDefault(){
 		 var __map =  new Map([
 			 ["port", 8079]
-			,["cacheLevel", 1]
+			,["cacheLevel", 2]
+			,["workingMode", 1]
 			,["endpointServer.address","http://baidu.com" ]
 		//	,["endpointServer.address","https://www3.lenovo.com"]
 			,["endpointServer.port", 9002 ]
@@ -101,32 +108,6 @@ const http = require("http")
 			});
 		 
 		 }
-
-		 //		 let __defaultConfig = {
-		 //			port: 8079
-		 //			 ,cacheLevel:1
-		 //			 ,cacheFile: ".data/proxyCache.json"
-		 //			 ,SSLKey: "/Users/i054410/Documents/develop/self-cert/key.pem"
-		 //			 ,SSLCert: "/Users/i054410/Documents/develop/self-cert/cert.pem"
-		 //			 ,relativePath: "./../gitaws/hybris/bin/custom/ext-b2c/b2cstorefront/web/webroot"
-		 //		 };
-		 //
-		 //		 __defaultConfig.endpointServer = {
-		 //			 address: "http://baidu.com"
-		 //			 ,port: 9002
-		 //			 ,host: undefined
-		 //			 ,user: undefined
-		 //			 ,password: undefined
-		 //		 };
-		 //
-		 //		 __defaultConfig.proxy={
-		 //			 //	host: "proxy.pal.sap.corp"
-		 //			 //,port: 8080
-		 //			 host: undefined
-		 //			 ,port: undefined
-		 //
-		 //
-		 //		 };
 
 		 __defaultConfig.keys = function(){
 		 
@@ -407,7 +388,7 @@ const http = require("http")
 	  }
 
 	  __generateKey(oService){
-		 return (oService.method === "get" && oService.param.length > 0)? oService.param: "data";
+		 return (oService.method === "get" &&oService.param&&  oService.param.length > 0)? oService.param: "data";
 	  }
 	  addService(oService){
 
@@ -458,7 +439,7 @@ const http = require("http")
 			  fs.readFile(_path,'utf-8',(err, data)=>{
 				  if(err){
 					  console.error(err);
-					  reject(err);
+					  resolve('no-data');
 					}else{
 						let oData = JSON.parse(data);
 						delete oData[oService.param];
@@ -519,6 +500,37 @@ const http = require("http")
 			  
 		  });
 	  }
+
+	  tryLoadLocalData(req,res){
+		  let oService = {};
+
+		  if(config.get("cacheLevel") > cacheLevel.no){
+						oService.method = req.method.toLowerCase();
+			if(oService.method === 'get' ){
+				var _aUrl = req.url.split("?");
+				oService.url = _aUrl[0];
+				
+			}else{
+				oService.url = req.url;
+				oService.param = req.bodyData;
+			}
+
+			oService.path = oService.url.replace(/\//g, "_");
+			
+		  }	
+
+		 return this.loadServiceData(oService).then(data=>{
+			  res.writeHead(200,{
+							 "Content-Type":MIME.json
+							});
+			  res.end(data);
+			  return data;
+		  }).catch(err=>{
+			  console.error(err);
+			  return err;
+			 
+		  });
+	  }
  }
 
 
@@ -535,8 +547,10 @@ const http = require("http")
 		 }	
 	 }	
 
-	 tryLoadLocalPage(req, res){
-		 if(this.cacheLevel > cacheLevel.no){
+	 tryLoadLocalData(req, res){
+
+		 return new Promise((resolve, reject)=>{
+			if(this.cacheLevel > cacheLevel.no){
 			 let __cacheRes = this.cache[this.generateCacheKey(req)];
 			 if(__cacheRes){
 				 res.statusCode = "200";
@@ -545,10 +559,14 @@ const http = require("http")
 				 });
 
 				 res.end(__cacheRes.data);
-				 return true;
+				 resolve("done");
+			 }else{
+				reject("no-data");
 			 }	
-		 }
-		 return false;
+			}else{
+				reject("no-data");
+			}
+		 });
 
 	 }
 
@@ -567,19 +585,14 @@ const http = require("http")
 			 res.statusCode=200;
 			 res.statusMessage = `persistence cache to file ${this.cacheFile} succeed`;
 			 res.end(res.statusMessage);
-
 		 });
 		 return;	
 	 }
-
  }
-
-
 
  class Router{
 
 	 constructor(){
-
 		 this.routeMap = new Map([
 			 [new RegExp(".*"),retrieveBody ]
 			,[new RegExp("_service_persistent"), bind( oCache.handlePersistence, oCache)]
@@ -587,7 +600,6 @@ const http = require("http")
 			,[new RegExp("/_ui/(.*)"), handleResource]
 			,[new RegExp("/public/"), handleStatic]
 			,[new RegExp(".*"),serverCb]
-
 		 ]);
 	 }
 	 route(req, res){
@@ -615,7 +627,6 @@ const http = require("http")
 	 constructor(){
 		 this.engine = ejs;
 	 }
-
 	 render(viewName,data, ops, cb){
 
 		 if(typeof ops === "function"){
@@ -631,7 +642,6 @@ const http = require("http")
 	
 	 let url = req.url;
 	 let _path = path.join(".", url);
-
 	 sendFile(_path, res);
 
  }
@@ -928,7 +938,7 @@ const http = require("http")
 
 	 if(__status === 2){
 
-		 if(config.get("cacheLevel") > cacheLevel.no){
+		 if(config.get("cacheLevel") > cacheLevel.no && config.get('workingMode') === 0 ){
 			 hostRes.pipe(new CacheStream({key: oCache.generateCacheKey(req),cache: oCache.cache, header:Object.assign({},hostRes.headers)})).pipe(res);
 		 }else{
 			 hostRes.pipe(res);
@@ -945,8 +955,16 @@ const http = require("http")
 		 hostRes.pipe(res);
 	 }else if(__status >= 4){
 		 console.log(`status is ${__status}`);
-		 if(oCache.tryLoadLocalPage(req, res)) return;
-		 hostRes.pipe(res);
+
+		 oDataProxy.tryLoadLocalData(req, res).then(data=>{
+		 
+			console.log("find cache");
+		 }).catch(err=>{
+			hostRes.pipe(res);
+		 });
+
+		 // if(oCache.tryLoadLocalData(req, res)) return;
+		 //hostRes.pipe(res);
 	 }
  }
 
@@ -963,11 +981,21 @@ const http = require("http")
 	 var _reqeustHeader = req.headers;
 
 	 if(config.get("cacheLevel") === cacheLevel.first){     // cache first
-		 if(!oCache.tryLoadLocalPage(req, res)){
+		
+		 
+		 oDataProxy.tryLoadLocalData(req, res).then(data=>{
+				console.log("find cache");
+		 }).catch(err=>{
 			 res.statusCode = 404;
 			 res.end(`can not find cache for ${req.url}`);
-			 return;
-		 }
+		 });
+		 
+		 
+		 //	 if(!oCache.tryLoadLocalData(req, res)){
+		 //	 res.statusCode = 404;
+		 //	 res.end(`can not find cache for ${req.url}`);
+		 //	 return;
+		 //}
 	 }else{
 
 		 var  endServerHost = config.get("endpointServer.host"),
@@ -994,9 +1022,17 @@ const http = require("http")
 					 }, (err, endPointRes)=>{
 						 if(err){
 							 if(config.get("cacheLevel") > cacheLevel.no){
-								 if(oCache.tryLoadLocalPage(req, res)) return;
+
+								 oDataProxy.tryLoadLocalData(req, res).then(data=>{
+									console,log("got cache");
+								 }).catch(err=>{
+									errResponse(err, res);
+								 })
+								 //if(oCache.tryLoadLocalData(req, res)) return;
+							 }else{
+								errResponse(err, res);		
 							 }
-							 errResponse(err, res);						
+							 				
 						 }else{
 							 handleResponse(endPointRes, res,req);	
 						 }
@@ -1026,7 +1062,7 @@ const http = require("http")
 						 // by this way, to get rid of untruseted https site
 						 __option.strictSSL=false;
 						 __option.agent = new https.Agent({
-							 host: endServerHost
+							  host: endServerHost
 							, port: endServerPort
 							, path: req.url
 							, rejectUnauthorized: false
@@ -1038,13 +1074,32 @@ const http = require("http")
 					 });
 
 					 __req.on("error", (e)=>{
-						 if(oCache.tryLoadLocalPage(req, res)) return;
-						 errResponse(e, res);
+
+						 oDataProxy.tryLoadLocalData(req, res).then(data=>{
+						 
+							console.log("got cache");
+						 }).catch(err=>{
+							 errResponse(e, res);
+						 
+						 });
+
+
+						 // if(oCache.tryLoadLocalData(req, res)) return;
+
+						 // errResponse(e, res);
 
 					 });
-					 __req.setTimeout(1000000, ()=>{
-						 if(oCache.tryLoadLocalPage(req, res)) return;
-						 errResponse({message:"request has timeout : 10000"}, res);
+					 __req.setTimeout(10000, ()=>{
+
+						oDataProxy.tryLoadLocalData(req, res).then(data=>{
+						 
+							console.log("got cache");
+						 }).catch(err=>{
+							errResponse({message:"request has timeout : 10000"}, res);						 
+						 });
+
+						 // if(oCache.tryLoadLocalData(req, res)) return;
+						 //errResponse({message:"request has timeout : 10000"}, res);
 					 });	
 					 req.bodyData&&__req.write(req.bodyData);			// post request body
 					 __req.end();
@@ -1053,11 +1108,11 @@ const http = require("http")
 	 }
  }
  var config = new ServerConfig();
- //config.loadEnvironmentConfig();
  var serviceConfig = new ServiceConfig();
  var oCache = new Cache(config);
  var oRouter = new Router();	
  var oView = new View();
+ var oDataProxy = config.get('workingMode') === 1? serviceConfig : oCache;
  var requestViaProxy = ((fn,proxyOp)=>{
 	 return function(){
 		 fn.apply(null, [proxyOp].concat([].slice.call(arguments)));
