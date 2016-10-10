@@ -18,13 +18,12 @@ const http = require("http")
  };
 
  const workingMode = {
-	 proxyCache: 0,
-	 serviceProvider: 1
+	 proxyCache: 0,			// worked as http proxy, support redirect to endpoint server, cache all kinds of response
+	 serviceProvider: 1		// worked as data provider service, ONLY SUPPORT JSON data
 
  };
  const SERVER_CONFIG = './_config/serverConfig.json';
  const SERVICE_CONFIG = './_config/serviceConfig.json';
-
 
  const MIME = {
 	 "js": "application/javascript",
@@ -75,7 +74,7 @@ const http = require("http")
 			 ["port", 8079]
 			,["cacheLevel", 2]
 			,["workingMode", 1]
-			,["endpointServer.address","http://baidu.com" ]
+			,["endpointServer.address","http://localhost" ]
 		//	,["endpointServer.address","https://www3.lenovo.com"]
 			,["endpointServer.port", 9002 ]
 			,["endpointServer.host", undefined]
@@ -96,7 +95,7 @@ const http = require("http")
 
 		 for (let [key, val] of __map){
 			
-			 let tmp = __defaultConfig;
+			let tmp = __defaultConfig;
 			key.split('.').forEach((K, inx, arr)=>{
 				
 				if(inx === arr.length -1){
@@ -104,9 +103,7 @@ const http = require("http")
 				}else{
 					tmp = tmp[K]?tmp[K]:tmp[K]={};
 				}
-			
 			});
-		 
 		 }
 
 		 __defaultConfig.keys = function(){
@@ -141,7 +138,6 @@ const http = require("http")
 				}else{
 					_o = _o[key];
 				}
-			
 			});	
 		 }
 		 return this;
@@ -203,7 +199,7 @@ const http = require("http")
 		 // return value;
 	 }
 	 hasProxy(){
-		 return !!this.get("proxy");
+		return !!(this.get("proxy")&&this.get("proxy").host&&this.get("proxy").host.length > 0);
 	 }
 
 	 isSSL(){
@@ -443,7 +439,7 @@ const http = require("http")
 					}else{
 						let oData = JSON.parse(data);
 						delete oData[oService.param];
-						fs.writeFile(_path, "utf-8",err=>{
+						fs.writeFile(_path,JSON.stringify(oData) ,"utf-8",err=>{
 							if(err){
 								console.error(err);
 								reject(err);
@@ -501,35 +497,50 @@ const http = require("http")
 		  });
 	  }
 
-	  tryLoadLocalData(req,res){
+	  constructServiceObject(req){
+
 		  let oService = {};
+		  oService.method = req.method.toLowerCase();
+
+		  if(oService.method === 'get' ){
+			  let _aUrl = req.url.split("?");
+			  oService.url = _aUrl[0];
+
+			  if(_aUrl[1]&& _aUrl[1].length > 0){
+				  oService.param =decodeURIComponent(_aUrl[1].replace(/\+/g, '%20')); 
+			  }
+		  }else{
+			  oService.url = req.url;
+			  oService.param = decodeURIComponent(req.bodyData.replace(/\+/g, '%20'));
+		  }
+
+		  oService.path = oService.url.replace(/\//g, "_");
+			return oService;
+	  }
+
+	  tryLoadLocalData(req,res){
 
 		  if(config.get("cacheLevel") > cacheLevel.no){
-						oService.method = req.method.toLowerCase();
-			if(oService.method === 'get' ){
-				var _aUrl = req.url.split("?");
-				oService.url = _aUrl[0];
-				
-			}else{
-				oService.url = req.url;
-				oService.param = req.bodyData;
-			}
 
-			oService.path = oService.url.replace(/\//g, "_");
-			
-		  }	
+			 let oService = this.constructServiceObject(req);
 
-		 return this.loadServiceData(oService).then(data=>{
-			  res.writeHead(200,{
-							 "Content-Type":MIME.json
-							});
-			  res.end(data);
-			  return data;
-		  }).catch(err=>{
-			  console.error(err);
-			  return err;
-			 
-		  });
+			  return this.loadServiceData(oService).then(data=>{
+				  res.writeHead(200,{
+					  "Content-Type":MIME.json
+				  });
+				  res.end(data);
+				  return data;
+			  }).catch(err=>{
+				  console.error(err);
+				  return err;
+			  });
+
+		  }else{
+			  return new Promise((resolve, reject)=>{
+					reject("ignore cache");
+			  });	
+			}	
+
 	  }
  }
 
@@ -907,7 +918,7 @@ const http = require("http")
 					 let aParam = pair.split("=");
 					 return {
 						 key: aParam[0],
-						 val: decodeURIComponent(aParam[1])
+						 val: decodeURIComponent(aParam[1].replace(/\+/g, '%20'))
 					 };
 				 });
 
@@ -938,9 +949,20 @@ const http = require("http")
 
 	 if(__status === 2){
 
-		 if(config.get("cacheLevel") > cacheLevel.no && config.get('workingMode') === 0 ){
-			 hostRes.pipe(new CacheStream({key: oCache.generateCacheKey(req),cache: oCache.cache, header:Object.assign({},hostRes.headers)})).pipe(res);
-		 }else{
+		 if(config.get("cacheLevel") > cacheLevel.no){
+			 if(config.get('workingMode') === 0){
+			
+	
+
+				hostRes.pipe(new CacheStream({key: oCache.generateCacheKey(req),cache: oCache.cache, header:Object.assign({},hostRes.headers)})).pipe(res);
+			 }else{
+				//TODO cache in data provider mode
+				 let __path = serverConfig.generatePath({method: req.method, path:req.url.replace(/\//g, "_") });
+					 // __key =serverConfig.__path 
+
+					 //	 hostRes.pipe(new CacheStream({key: { path:__path } ,serviceConfig: serviceConfig })).pipe(res);	
+			 }
+		}else{
 			 hostRes.pipe(res);
 		 }
 
@@ -976,11 +998,17 @@ const http = require("http")
  }
 
  function serverCb(req, res) {
+		
+
+	 if(req.url === "/favicon.ico"){
+		 res.end("");
+		 return;
+	 }
 
 	 //var matched;
 	 var _reqeustHeader = req.headers;
 
-	 if(config.get("cacheLevel") === cacheLevel.first){     // cache first
+	 if(config.get("cacheLevel") == cacheLevel.first){     // cache first
 		
 		 
 		 oDataProxy.tryLoadLocalData(req, res).then(data=>{
@@ -1112,7 +1140,13 @@ const http = require("http")
  var oCache = new Cache(config);
  var oRouter = new Router();	
  var oView = new View();
- var oDataProxy = config.get('workingMode') === 1? serviceConfig : oCache;
+ var oDataProxy = config.get('workingMode') == 1? serviceConfig : oCache;
+
+
+ console.log(config.get('workingMode'));
+ console.log(config.get('workingMode') === 1);
+
+
  var requestViaProxy = ((fn,proxyOp)=>{
 	 return function(){
 		 fn.apply(null, [proxyOp].concat([].slice.call(arguments)));
