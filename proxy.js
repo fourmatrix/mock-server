@@ -342,11 +342,12 @@ const http = require("http")
 	  __findService(oService){
 	  
 	  return this.serviceMap.findIndex(service=>{
-				  if(oService.method === 'get'){
-					return service.url === oService.url && service.method === oService.method&& service.param === oService.param;
-				  }else{
-					return service.url === oService.url && service.method === oService.method;
-				  }
+				 //  if(oService.method === 'get'){
+					// return service.url === oService.url && service.method === oService.method&& service.param === oService.param;
+				 //  }else{
+					// return service.url === oService.url && service.method === oService.method;
+				 //  }
+				 	return service.url === oService.url && service.method === oService.method&& service.param === oService.param;
 				 });
 
 	  }
@@ -384,7 +385,8 @@ const http = require("http")
 	  }
 
 	  __generateKey(oService){
-		 return (oService.method === "get" &&oService.param&&  oService.param.length > 0)? oService.param: "data";
+		 // return (oService.method === "get" &&oService.param&&  oService.param.length > 0)? oService.param: "data";
+		 return (oService.param&&  oService.param.length > 0)? oService.param: "data";
 	  }
 	  addService(oService){
 
@@ -430,7 +432,8 @@ const http = require("http")
 		  var _path = this.generatePath(oService);
 	return new Promise((resolve, reject)=>{
 
-		  if(oService.method === 'get' && oService.param.length > 0){
+		  // if(oService.method === 'get' && oService.param.length > 0){
+		  	if(oService.param.length > 0){
 			
 			  fs.readFile(_path,'utf-8',(err, data)=>{
 				  if(err){
@@ -502,17 +505,17 @@ const http = require("http")
 		  let oService = {};
 		  oService.method = req.method.toLowerCase();
 
-		  if(oService.method === 'get' ){
+		  // if(oService.method === 'get' ){
 			  let _aUrl = req.url.split("?");
 			  oService.url = _aUrl[0];
 
 			  if(_aUrl[1]&& _aUrl[1].length > 0){
 				  oService.param =decodeURIComponent(_aUrl[1].replace(/\+/g, '%20')); 
 			  }
-		  }else{
-			  oService.url = req.url;
-			  oService.param = decodeURIComponent(req.bodyData.replace(/\+/g, '%20'));
-		  }
+		  // }else{
+			 //  oService.url = req.url;
+			 //  oService.param = decodeURIComponent(req.bodyData.replace(/\+/g, '%20'));
+		  // }
 
 		  oService.path = oService.url.replace(/\//g, "_");
 			return oService;
