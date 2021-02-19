@@ -36,11 +36,11 @@ table td {
 }
 
 td a{
-	
+
 	display: inline-block;
 		margin: 0 5px;
 
-} 
+}
 .eidt-area{
 
 	width: 100%;
@@ -74,11 +74,17 @@ textArea{
 
 				<table>
 					<thead>
-						<td>service URL</td><td>service method</td><td>service parameter</td><td>action</td>	
+						<td>action</td><td>service URL</td><td>service method</td><td>service parameter</td><td>action</td>
 					</thead>
 
 					<% serviceList.forEach((service)=>{ %>
-					<tr><td class="service-url"><%=service.url %></td><td class="service-method"><%=service.method %></td><td class="service-param"><%=service.param %></td><td><a class="edit">edit</a><a class="delete">delete</a></td></tr>	
+					<tr>
+						<td><a class="edit">edit</a><a class="delete">delete</a></td>
+						<td class="service-url"><%=service.url %></td>
+						<td class="service-method"><%=service.method %></td>
+						<td class="service-param"><%=service.param %></td>
+						<td><a class="edit">edit</a><a class="delete">delete</a></td>
+					</tr>
 					<%}) %>
 				</table>
 
@@ -90,7 +96,7 @@ textArea{
 					<button id="service-submit" type="button">Save</button>
 				</div>
 
-		</div>	
+		</div>
 
 		<script type="application/javascript" src="/public/jquery-1.11.1.min.js"></script>
 		<script type="application/javascript" src="/public/configuration.js"></script>
